@@ -47,12 +47,11 @@ if ($LASTEXITCODE -ne 0) { throw 'Failed to assign Artifact Signing Certificate 
 
 Remove-Item $tmp -Force -ErrorAction SilentlyContinue
 
-$tenantId = az account show --query tenantId -o tsv
 Write-Host ''
 Write-Host 'GitHub OIDC federation configured.' -ForegroundColor Green
 Write-Host "AZURE_CLIENT_ID=$appId"
-Write-Host "AZURE_TENANT_ID=$tenantId"
 Write-Host "AZURE_SUBSCRIPTION_ID=$SubscriptionId"
 Write-Host "GitHub OIDC subject=$subject"
 Write-Host ''
-Write-Host 'Configure ARTIFACT_SIGNING_ENDPOINT, ARTIFACT_SIGNING_ACCOUNT, and ARTIFACT_SIGNING_PROFILE as GitHub Actions variables.'
+Write-Host 'Add AZURE_TENANT_ID as well (az account show --query tenantId -o tsv).'
+Write-Host 'Then configure ARTIFACT_SIGNING_ENDPOINT, ARTIFACT_SIGNING_ACCOUNT, and ARTIFACT_SIGNING_PROFILE in GitHub Actions variables.'
