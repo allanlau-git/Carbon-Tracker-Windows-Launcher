@@ -91,10 +91,11 @@ def patch_pe(exe, ico, out):
     data.extend(rsrc)
     data.extend(b'\0'*(rawsize-len(rsrc)))
     name=b'.rsrc\0\0\0'
-    chars=0x40000040
+    chars=0x40000040  # initialized data | read
     data[new_hdr:new_hdr+40]=struct.pack('<8sIIIIIIHHI',name,len(rsrc),new_rva,rawsize,rawptr,0,0,0,0,chars)
     struct.pack_into('<H',data,coff+2,nsec+1)
     struct.pack_into('<I',data,opt+56,align(new_rva+len(rsrc),sec_align))
+    # resource data directory entry #2
     dd=opt+112+2*8
     struct.pack_into('<II',data,dd,new_rva,len(rsrc))
     pathlib.Path(out).write_bytes(data)
