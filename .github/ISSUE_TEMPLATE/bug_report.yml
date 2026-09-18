@@ -1,0 +1,34 @@
+name: Bug report
+description: Report a reproducible Windows launcher problem
+title: "[Bug]: "
+labels: [bug]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: What happened?
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: Windows 11 24H2
+    validations:
+      required: true
+  - type: input
+    id: docker
+    attributes:
+      label: Docker Desktop version
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: Start → Stop → Start ...
+    validations:
+      required: true
+  - type: textarea
+    id: output
+    attributes:
+      label: Launcher output / logs
+      description: Remove credentials or confidential data before posting.
