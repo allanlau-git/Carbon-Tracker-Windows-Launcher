@@ -1,0 +1,136 @@
+name: Build, sign and publish Windows release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version without v prefix, e.g. 4.4.1'
+        required: true
+        type: string
+      publish_release:
+        description: 'Publish a GitHub Release'
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  build-sign-release:
+    name: Build and sign Windows launcher
+    runs-on: windows-2025
+    environment: release-signing
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        run: |
+          if ('${{ github.event_name }}' -eq 'push') {
+            $version = '${{ github.ref_name }}'.TrimStart('v')
+          } else {
+            $version = '${{ inputs.version }}'.TrimStart('v')
+          }
+          if ($version -notmatch '^\d+\.\d+\.\d+([-.][0-9A-Za-z.-]+)?$') {
+            throw "Invalid version: $version"
+          }
+          "version=$version" >> $env:GITHUB_OUTPUT
+          "tag=v$version" >> $env:GITHUB_OUTPUT
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build launcher and embed icon
+        shell: pwsh
+        run: ./build.ps1 -Version '${{ steps.version.outputs.version }}'
+
+      - name: Azure login with GitHub OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign launcher with Azure Artifact Signing
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          files: ${{ github.workspace }}\dist\CarbonTrackerLauncher-v${{ steps.version.outputs.version }}.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          description: Carbon Tracker Windows Launcher
+          description-url: ${{ github.server_url }}/${{ github.repository }}
+          timeout: 600
+
+      - name: Verify Authenticode signature
+        shell: pwsh
+        run: |
+          $exe = Join-Path '${{ github.workspace }}' 'dist\CarbonTrackerLauncher-v${{ steps.version.outputs.version }}.exe'
+          $sig = Get-AuthenticodeSignature -FilePath $exe
+          $sig | Format-List Status,StatusMessage,SignerCertificate,TimeStamperCertificate
+          if ($sig.Status -ne 'Valid') {
+            throw "Authenticode verification failed: $($sig.Status) - $($sig.StatusMessage)"
+          }
+
+      - name: Create SHA-256 checksum
+        shell: pwsh
+        run: |
+          $exe = 'dist\CarbonTrackerLauncher-v${{ steps.version.outputs.version }}.exe'
+          $hash = (Get-FileHash $exe -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$hash  CarbonTrackerLauncher-v${{ steps.version.outputs.version }}.exe" | Set-Content -Encoding ascii 'dist\SHA256SUMS.txt'
+          Get-Content 'dist\SHA256SUMS.txt'
+
+      - name: Upload signed workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CarbonTrackerLauncher-v${{ steps.version.outputs.version }}-signed
+          path: |
+            dist/CarbonTrackerLauncher-v${{ steps.version.outputs.version }}.exe
+            dist/SHA256SUMS.txt
+          if-no-files-found: error
+
+      - name: Publish GitHub Release from tag
+        if: github.event_name == 'push'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create '${{ steps.version.outputs.tag }}' `
+            'dist\CarbonTrackerLauncher-v${{ steps.version.outputs.version }}.exe' `
+            'dist\SHA256SUMS.txt' `
+            --verify-tag `
+            --generate-notes `
+            --title 'Carbon Tracker Windows Launcher ${{ steps.version.outputs.tag }}'
+
+      - name: Publish GitHub Release from manual run
+        if: github.event_name == 'workflow_dispatch' && inputs.publish_release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = '${{ steps.version.outputs.tag }}'
+          git tag $tag
+          git push origin $tag
+          gh release create $tag `
+            'dist\CarbonTrackerLauncher-v${{ steps.version.outputs.version }}.exe' `
+            'dist\SHA256SUMS.txt' `
+            --generate-notes `
+            --title "Carbon Tracker Windows Launcher $tag"
