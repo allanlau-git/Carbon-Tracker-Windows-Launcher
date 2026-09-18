@@ -1,0 +1,14 @@
+/dist/*
+!/dist/.gitkeep
+*.exe
+*.zip
+*.pfx
+*.p12
+*.cer
+*.pem
+*.key
+.env
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
