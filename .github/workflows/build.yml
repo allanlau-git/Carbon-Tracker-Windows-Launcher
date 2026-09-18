@@ -1,0 +1,39 @@
+name: Build Windows launcher
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-2025
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build and embed icon
+        shell: pwsh
+        run: ./build.ps1
+
+      - name: Upload unsigned build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CarbonTrackerLauncher-windows-x64-unsigned
+          path: dist/CarbonTrackerLauncher-v4.4.0.exe
+          if-no-files-found: error
