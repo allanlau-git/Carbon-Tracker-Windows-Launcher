@@ -1,0 +1,75 @@
+name: Build, sign and release Windows launcher
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+  id-token: write
+
+jobs:
+  build-sign-release:
+    runs-on: windows-2025
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build launcher and embed icon
+        shell: pwsh
+        run: ./build.ps1
+
+      - name: Azure login with OIDC
+        uses: azure/login@v3
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign executable with Microsoft Artifact Signing
+        uses: azure/artifact-signing-action@v2
+        with:
+          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_PROFILE }}
+          files: ${{ github.workspace }}\dist\CarbonTrackerLauncher-v4.4.0.exe
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+          description: Sustainability Monitoring Hub - Carbon Tracker Windows Launcher
+          description-url: https://github.com/msf4-0/Sustainability-Monitoring-Hub-202602
+
+      - name: Create SHA-256 checksum
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash .\dist\CarbonTrackerLauncher-v4.4.0.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  CarbonTrackerLauncher-v4.4.0.exe" | Set-Content .\dist\SHA256SUMS.txt -Encoding ascii
+
+      - name: Verify Authenticode signature
+        shell: pwsh
+        run: |
+          $sig = Get-AuthenticodeSignature .\dist\CarbonTrackerLauncher-v4.4.0.exe
+          $sig | Format-List *
+          if ($sig.Status -ne 'Valid') { throw "Signature is not valid: $($sig.Status)" }
+
+      - name: Create GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${{ github.ref_name }}" `
+            .\dist\CarbonTrackerLauncher-v4.4.0.exe `
+            .\dist\SHA256SUMS.txt `
+            --title "Carbon Tracker Windows Launcher ${{ github.ref_name }}" `
+            --generate-notes
