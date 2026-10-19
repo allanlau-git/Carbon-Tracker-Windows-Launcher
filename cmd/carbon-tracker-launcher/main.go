@@ -730,12 +730,13 @@ func dockerDesktopInstalled() bool {
 	return false
 }
 
-func downloadDockerDesktopInstaller() (string, error) {
+func downloadDockerDesktopInstaller(log *installerLog) (string, error) {
 	setStatus("Downloading Docker Desktop. Please wait....")
 	setOutput("Downloading the current Docker Desktop installer from Docker.\r\n\r\nPlease wait.... Do not close this launcher while the download is in progress.")
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Minute)
 	defer cancel()
 	url := "https://desktop.docker.com/win/main/amd64/Docker%20Desktop%20Installer.exe"
+	log.record("Installer download URL", url)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return "", err
@@ -754,39 +755,29 @@ func downloadDockerDesktopInstaller() (string, error) {
 		return "", err
 	}
 	path := filepath.Join(tmp, "Docker Desktop Installer.exe")
+	log.record("Installer path", path)
 	f, err := os.Create(path)
 	if err != nil {
-		os.RemoveAll(tmp)
+		log.record("Temporary folder retained after download failure", tmp)
 		return "", err
 	}
 	_, copyErr := io.Copy(f, io.LimitReader(resp.Body, 2*1024*1024*1024))
 	closeErr := f.Close()
 	if copyErr != nil {
-		os.RemoveAll(tmp)
+		log.record("Temporary folder retained after download failure", tmp)
 		return "", copyErr
 	}
 	if closeErr != nil {
-		os.RemoveAll(tmp)
+		log.record("Temporary folder retained after download failure", tmp)
 		return "", closeErr
 	}
 	return path, nil
 }
 
-func runDockerDesktopInstaller(installer string) error {
+func runDockerDesktopInstaller(installer string, log *installerLog) error {
 	setStatus("Installing Docker Desktop silently. Please wait....")
 	setOutput("Docker Desktop is being installed with the recommended per-user defaults and WSL 2 backend.\r\n\r\nPlease wait.... This may take several minutes. Carbon Tracker will NOT be installed automatically.")
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, installer, "install", "--user", "--quiet", "--accept-license", "--backend=wsl-2")
-	cmd.SysProcAttr = &syscall.SysProcAttr{HideWindow: true}
-	out, err := cmd.CombinedOutput()
-	if ctx.Err() == context.DeadlineExceeded {
-		return errors.New("Docker Desktop installation timed out after 30 minutes")
-	}
-	if err != nil {
-		return fmt.Errorf("Docker Desktop installer failed: %v\r\n%s", err, strings.TrimSpace(string(out)))
-	}
-	return nil
+	return log.command(30*time.Minute, nil, installer, "install", "--user", "--quiet", "--accept-license", "--backend=wsl-2")
 }
 
 func tryDockerDesktopCLIUpdate() (bool, string) {
@@ -806,12 +797,36 @@ func tryDockerDesktopCLIUpdate() (bool, string) {
 	return false, strings.TrimSpace(string(out))
 }
 
-func installUpdateDockerDesktop() error {
+func installUpdateDockerDesktop() (result error) {
+	log, err := openInstallerLog()
+	if err != nil {
+		return fmt.Errorf("Cannot create Docker Desktop installer log at %s: %w", dockerInstallerLogPath(), err)
+	}
+	defer func() {
+		log.detection("after")
+		if result != nil {
+			log.record("FAILED", result.Error())
+		} else {
+			log.record("Completed", "Docker Desktop operation completed.")
+		}
+		closeErr := log.f.Close()
+		if log.err != nil || closeErr != nil {
+			result = fmt.Errorf("Docker Desktop result: %v; log write error: %v; log close error: %v", result, log.err, closeErr)
+		}
+		if result != nil {
+			result = fmt.Errorf("%w\r\n\r\nDocker Desktop troubleshooting log: %s", result, dockerInstallerLogPath())
+		}
+	}()
+	setStatus("Collecting Docker Desktop diagnostics. Please wait....")
+	setOutput("Troubleshooting log:\r\n" + dockerInstallerLogPath())
+	log.diagnostics()
 	setStatus("Checking Docker Desktop. Please wait....")
 	setOutput("Checking whether Docker Desktop is installed and whether it can be updated.\r\n\r\nPlease wait.... Carbon Tracker installation will not start from this button.")
 	if dockerDesktopInstalled() {
 		setStatus("Docker Desktop is already installed. Checking for updates. Please wait....")
-		if ok, out := tryDockerDesktopCLIUpdate(); ok {
+		ok, out := tryDockerDesktopCLIUpdate()
+		log.record("Docker Desktop CLI update", fmt.Sprintf("Succeeded: %t\r\nOutput: %s", ok, out))
+		if ok {
 			setStatus("Docker Desktop update check completed.")
 			msg := "Docker Desktop is already installed and its update check completed."
 			if out != "" {
@@ -825,13 +840,17 @@ func installUpdateDockerDesktop() error {
 		setOutput("Docker Desktop was detected, so it was NOT downloaded or reinstalled.\r\n\r\nThe automatic Docker Desktop update command was unavailable or did not complete successfully. You can use Docker Desktop's own update mechanism later.\r\n\r\nCarbon Tracker was NOT installed or started. Start Docker Desktop and wait until it reports Running, then click Install / Update for Carbon Tracker.")
 		return nil
 	}
-	installer, err := downloadDockerDesktopInstaller()
+	installer, err := downloadDockerDesktopInstaller(log)
 	if err != nil {
 		return err
 	}
-	defer os.RemoveAll(filepath.Dir(installer))
-	if err := runDockerDesktopInstaller(installer); err != nil {
-		return err
+	if err := runDockerDesktopInstaller(installer, log); err != nil {
+		log.record("Temporary folder retained after installer failure", filepath.Dir(installer))
+		return fmt.Errorf("Docker Desktop installer failed: %w", err)
+	}
+	log.record("Installer succeeded; removing temporary folder", filepath.Dir(installer))
+	if err := os.RemoveAll(filepath.Dir(installer)); err != nil {
+		log.record("Temporary folder cleanup error", err.Error())
 	}
 	setStatus("Docker Desktop installation/update completed.")
 	setOutput("Docker Desktop installation/update completed successfully.\r\n\r\nCarbon Tracker was NOT installed or started.\r\n\r\nPlease start Docker Desktop and wait until it reports Running. Then return here and click Install / Update to install or update Carbon Tracker.\r\n\r\nThe launcher will automatically use Docker Desktop's installed CLI and credential-helper paths even if Windows has not refreshed PATH yet.")
@@ -1319,7 +1338,7 @@ func stopApp() error {
 func viewLogs() error {
 	p, e := findCompose()
 	if e != nil {
-		return e
+		return viewInstallerLog()
 	}
 	setStatus("Collecting Docker logs. Please wait....")
 	out, e := runDocker(45*time.Second, p, "logs", "--no-color", "--tail", "300")

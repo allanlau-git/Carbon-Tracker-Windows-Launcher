@@ -50,6 +50,16 @@ Docker Desktop installation does **not** automatically install Carbon Tracker. T
 
 Use **Install / Update** to check for an upstream update. Use **Start** and **Stop** for normal operation.
 
+## Docker Desktop troubleshooting
+
+The Docker Desktop button appends diagnostics for every attempt to:
+
+`%LOCALAPPDATA%\SustainabilityMonitoringHub\logs\docker-desktop-install.log`
+
+The log records timestamps, Windows version, Docker detection before/after, WSL status/version, virtualization and optional-feature checks, installer path/command, exit code, and separate stdout/stderr output. Checks are read-only and time-limited; unsupported checks or checks requiring elevation are recorded as unavailable/errors. Failed downloads and installations retain their temporary folder, whose path is recorded in the log. Successful installations clean up the installer folder.
+
+Failures display the log path in the launcher. **View Logs** opens this installer log when no Carbon Tracker Compose file exists. Once a Compose file is present, it keeps exporting the application's Docker logs as before. Retrying appends a new session instead of erasing previous evidence.
+
 ## Build from source
 
 Prerequisites:
